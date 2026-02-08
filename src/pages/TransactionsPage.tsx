@@ -1,17 +1,20 @@
 import { useMemo, useState } from "react";
-import { useBudget } from "@/context/BudgetContext";
 import { TransactionRow } from "@/components/TransactionRow";
 import { AddTransactionSheet } from "@/components/AddTransactionSheet";
 import { CsvImportSheet } from "@/components/CsvImportSheet";
 import { Plus, Upload } from "lucide-react";
+import { useAppStore } from "../lib/store";
 
 export default function TransactionsPage() {
-  const { transactions } = useBudget();
+  const transactions = useAppStore((s) => s.transactions);
+  const categories = useAppStore((s) => s.categories);
   const [showAdd, setShowAdd] = useState(false);
   const [showCsv, setShowCsv] = useState(false);
 
   const grouped = useMemo(() => {
-    const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = [...transactions].sort((a, b) =>
+      b.date.localeCompare(a.date)
+    );
     const groups: Record<string, typeof transactions> = {};
     sorted.forEach((tx) => {
       const key = tx.date;
@@ -22,7 +25,11 @@ export default function TransactionsPage() {
   }, [transactions]);
 
   const formatDate = (d: string) =>
-    new Date(d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    new Date(d).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
 
   return (
     <div className="px-4 pt-14 pb-24 max-w-lg mx-auto">

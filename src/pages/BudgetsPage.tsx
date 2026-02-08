@@ -1,47 +1,72 @@
 import { useMemo, useState } from "react";
-import { useBudget } from "@/context/BudgetContext";
-import { CATEGORIES } from "@/types/budget";
 import { Plus, Trash2 } from "lucide-react";
+import { useAppStore } from "@/lib/store";
+
+const CATEGORIES = ["Income", "Food", "Transport", "Bills", "Other"];
 
 export default function BudgetsPage() {
-  const { budgets, setBudgets, transactions, accounts, settings, convert, currentMonth } = useBudget();
+  const budgets = useAppStore((s) => s.budgets);
+  const upsertBudget = useAppStore((s) => s.upsertBudget);
+  const deleteBudget = useAppStore((s) => s.deleteBudget);
+
+  const transactions = useAppStore((s) => s.transactions);
+  const accounts = useAppStore((s) => s.accounts);
+  const fxRates = useAppStore((s) => s.fxRates);
+  const homeCurrency = useAppStore((s) => s.homeCurrency);
+
   const [showAdd, setShowAdd] = useState(false);
   const [newCat, setNewCat] = useState(CATEGORIES[0]);
   const [newLimit, setNewLimit] = useState("");
 
+  const currentMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+
+  const rateToUSD = (currency: string) =>
+    fxRates.find((r) => r.currency === currency)?.rateToUSD ?? 1;
+
+  const toUSD = (amount: number, fromCurrency: string) =>
+    amount * rateToUSD(fromCurrency);
+
   const monthBudgets = useMemo(
-    () => budgets.filter((b) => b.month === currentMonth),
+    () => budgets.filter((b) => b.monthKey === currentMonth),
     [budgets, currentMonth]
   );
 
-  const spending = useMemo(() => {
+  const spendingUSD = useMemo(() => {
     const result: Record<string, number> = {};
     transactions
       .filter((t) => t.date.startsWith(currentMonth) && t.amount < 0)
       .forEach((t) => {
         const acc = accounts.find((a) => a.id === t.accountId);
-        const home = convert(Math.abs(t.amount), acc?.currency || settings.homeCurrency, settings.homeCurrency);
-        result[t.category] = (result[t.category] || 0) + home;
+        const cur = acc?.currency ?? "USD";
+        const usd = toUSD(Math.abs(t.amount), cur);
+
+        // categoryId currently contains the category name in your app
+        const cat = t.categoryId || "Other";
+        result[cat] = (result[cat] || 0) + usd;
       });
     return result;
-  }, [transactions, currentMonth, accounts, convert, settings.homeCurrency]);
+  }, [transactions, currentMonth, accounts, fxRates]);
 
   const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: settings.homeCurrency, minimumFractionDigits: 0 }).format(n);
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: homeCurrency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(n);
 
   const handleAdd = () => {
-    const limit = parseFloat(newLimit);
-    if (isNaN(limit) || limit <= 0) return;
-    setBudgets((prev) => [
-      ...prev.filter((b) => !(b.category === newCat && b.month === currentMonth)),
-      { id: crypto.randomUUID(), category: newCat, limit, month: currentMonth },
-    ]);
+    const limit = Number(newLimit);
+    if (!Number.isFinite(limit) || limit <= 0) return;
+
+    upsertBudget({
+      monthKey: currentMonth,
+      categoryId: newCat, // using category name for now
+      limitUSD: limit,
+    });
+
     setNewLimit("");
     setShowAdd(false);
-  };
-
-  const handleDelete = (id: string) => {
-    setBudgets((prev) => prev.filter((b) => b.id !== id));
   };
 
   return (
@@ -63,17 +88,23 @@ export default function BudgetsPage() {
             onChange={(e) => setNewCat(e.target.value)}
             className="w-full rounded-lg bg-secondary px-3 py-2.5 text-sm text-foreground"
           >
-            {CATEGORIES.filter((c) => !monthBudgets.some((b) => b.category === c)).map((c) => (
-              <option key={c} value={c}>{c}</option>
+            {CATEGORIES.filter(
+              (c) => !monthBudgets.some((b) => b.categoryId === c)
+            ).map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
             ))}
           </select>
+
           <input
             type="number"
             value={newLimit}
             onChange={(e) => setNewLimit(e.target.value)}
-            placeholder="Monthly limit"
+            placeholder="Monthly limit (USD)"
             className="w-full rounded-lg bg-secondary px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground"
           />
+
           <button
             onClick={handleAdd}
             className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground"
@@ -85,28 +116,46 @@ export default function BudgetsPage() {
 
       <div className="space-y-3">
         {monthBudgets.map((b) => {
-          const spent = spending[b.category] || 0;
-          const pct = Math.min((spent / b.limit) * 100, 100);
-          const over = spent > b.limit;
+          const spent = spendingUSD[b.categoryId] || 0;
+          const limit = b.limitUSD;
+          const pct = Math.min((spent / limit) * 100, 100);
+          const over = spent > limit;
+
           return (
-            <div key={b.id} className="ios-card">
+            <div key={`${b.monthKey}-${b.categoryId}`} className="ios-card">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-medium">{b.category}</p>
-                <button onClick={() => handleDelete(b.id)} className="text-muted-foreground">
+                <p className="text-sm font-medium">{b.categoryId}</p>
+                <button
+                  onClick={() => deleteBudget(b.monthKey, b.categoryId)}
+                  className="text-muted-foreground"
+                  aria-label="Delete budget"
+                >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
+
               <div className="h-2 rounded-full bg-secondary overflow-hidden mb-2">
                 <div
-                  className={`h-full rounded-full transition-all ${over ? "bg-destructive" : "bg-primary"}`}
+                  className={`h-full rounded-full transition-all ${
+                    over ? "bg-destructive" : "bg-primary"
+                  }`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
+
               <div className="flex justify-between text-xs">
-                <span className={over ? "text-destructive font-medium" : "text-muted-foreground"}>
+                <span
+                  className={
+                    over
+                      ? "text-destructive font-medium"
+                      : "text-muted-foreground"
+                  }
+                >
                   {fmt(spent)} spent
                 </span>
-                <span className="text-muted-foreground">{fmt(b.limit)} limit</span>
+                <span className="text-muted-foreground">
+                  {fmt(limit)} limit
+                </span>
               </div>
             </div>
           );

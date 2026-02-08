@@ -1,6 +1,16 @@
 import { useMemo } from "react";
-import { useBudget } from "@/context/BudgetContext";
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from "recharts";
+import { useAppStore } from "@/lib/store";
 
 const CHART_COLORS = [
   "hsl(211, 100%, 50%)",
@@ -14,42 +24,78 @@ const CHART_COLORS = [
 ];
 
 export default function InsightsPage() {
-  const { transactions, accounts, settings, convert, currentMonth } = useBudget();
+  const transactions = useAppStore((s) => s.transactions);
+  const accounts = useAppStore((s) => s.accounts);
+  const fxRates = useAppStore((s) => s.fxRates);
+  const homeCurrency = useAppStore((s) => s.homeCurrency);
+  const categories = useAppStore((s) => s.categories);
+  const currentMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+
+  const rateToUSD = (currency: string) =>
+    fxRates.find((r) => r.currency === currency)?.rateToUSD ?? 1;
+
+  const toUSD = (amount: number, fromCurrency: string) =>
+    amount * rateToUSD(fromCurrency);
 
   const monthTx = useMemo(
-    () => transactions.filter((t) => t.date.startsWith(currentMonth) && t.amount < 0),
+    () =>
+      transactions.filter(
+        (t) => t.date.startsWith(currentMonth) && t.amount < 0
+      ),
     [transactions, currentMonth]
   );
 
   const byCategory = useMemo(() => {
     const map: Record<string, number> = {};
+
     monthTx.forEach((t) => {
       const acc = accounts.find((a) => a.id === t.accountId);
-      const home = convert(Math.abs(t.amount), acc?.currency || settings.homeCurrency, settings.homeCurrency);
-      map[t.category] = (map[t.category] || 0) + home;
+      const cur = acc?.currency ?? "USD";
+      const usd = toUSD(Math.abs(t.amount), cur);
+
+      const catId = t.categoryId || "";
+      map[catId] = (map[catId] || 0) + usd;
     });
+
+    const other = categories.find((c) => c.name.toLowerCase() === "other");
+
     return Object.entries(map)
-      .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
+      .map(([catId, value]) => {
+        const c = categories.find((x) => x.id === catId);
+        return {
+          id: catId || (other?.id ?? "other"),
+          name: c?.name ?? "Other",
+          icon: c?.icon ?? other?.icon ?? "📌",
+          value: Math.round(value * 100) / 100,
+        };
+      })
       .sort((a, b) => b.value - a.value);
-  }, [monthTx, accounts, convert, settings.homeCurrency]);
+  }, [monthTx, accounts, fxRates, categories]);
 
   const dailySpending = useMemo(() => {
     const map: Record<string, number> = {};
     monthTx.forEach((t) => {
       const day = t.date.slice(8);
       const acc = accounts.find((a) => a.id === t.accountId);
-      const home = convert(Math.abs(t.amount), acc?.currency || settings.homeCurrency, settings.homeCurrency);
-      map[day] = (map[day] || 0) + home;
+      const cur = acc?.currency ?? "USD";
+      const usd = toUSD(Math.abs(t.amount), cur);
+
+      map[day] = (map[day] || 0) + usd;
     });
+
     return Object.entries(map)
       .map(([day, amount]) => ({ day, amount: Math.round(amount * 100) / 100 }))
       .sort((a, b) => a.day.localeCompare(b.day));
-  }, [monthTx, accounts, convert, settings.homeCurrency]);
+  }, [monthTx, accounts, fxRates, categories]);
 
   const totalSpent = byCategory.reduce((s, c) => s + c.value, 0);
 
   const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", { style: "currency", currency: settings.homeCurrency, minimumFractionDigits: 0 }).format(n);
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: homeCurrency,
+      minimumFractionDigits: 0,
+    }).format(n);
 
   return (
     <div className="px-4 pt-14 pb-24 max-w-lg mx-auto space-y-6">
@@ -74,34 +120,53 @@ export default function InsightsPage() {
                     paddingAngle={2}
                   >
                     {byCategory.map((_, i) => (
-                      <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />
+                      <Cell
+                        key={i}
+                        fill={CHART_COLORS[i % CHART_COLORS.length]}
+                      />
                     ))}
                   </Pie>
                 </PieChart>
               </ResponsiveContainer>
             </div>
+
             <div className="space-y-2 mt-2">
               {byCategory.map((cat, i) => (
-                <div key={cat.name} className="flex items-center justify-between text-sm">
+                <div
+                  key={cat.id}
+                  className="flex items-center justify-between text-sm"
+                >
                   <div className="flex items-center gap-2">
                     <div
                       className="h-3 w-3 rounded-full"
-                      style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                      style={{
+                        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
+                      }}
                     />
-                    <span>{cat.name}</span>
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-base leading-none">{cat.icon}</span>
+                      <span>{cat.name}</span>
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground">
-                      {Math.round((cat.value / totalSpent) * 100)}%
+                      {totalSpent > 0
+                        ? Math.round((cat.value / totalSpent) * 100)
+                        : 0}
+                      %
                     </span>
-                    <span className="font-medium tabular-nums">{fmt(cat.value)}</span>
+                    <span className="font-medium tabular-nums">
+                      {fmt(cat.value)}
+                    </span>
                   </div>
                 </div>
               ))}
             </div>
           </>
         ) : (
-          <p className="text-center text-muted-foreground py-12 text-sm">No spending data this month</p>
+          <p className="text-center text-muted-foreground py-12 text-sm">
+            No spending data this month
+          </p>
         )}
       </div>
 
@@ -112,8 +177,16 @@ export default function InsightsPage() {
           <div className="h-40">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={dailySpending}>
-                <XAxis dataKey="day" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" width={40} />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fontSize: 10 }}
+                  stroke="hsl(var(--muted-foreground))"
+                />
+                <YAxis
+                  tick={{ fontSize: 10 }}
+                  stroke="hsl(var(--muted-foreground))"
+                  width={40}
+                />
                 <Tooltip
                   contentStyle={{
                     background: "hsl(var(--card))",
@@ -122,12 +195,18 @@ export default function InsightsPage() {
                     fontSize: 12,
                   }}
                 />
-                <Bar dataKey="amount" fill="hsl(211, 100%, 50%)" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="amount"
+                  fill="hsl(211, 100%, 50%)"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>
         ) : (
-          <p className="text-center text-muted-foreground py-12 text-sm">No data yet</p>
+          <p className="text-center text-muted-foreground py-12 text-sm">
+            No data yet
+          </p>
         )}
       </div>
     </div>

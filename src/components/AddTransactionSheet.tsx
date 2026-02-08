@@ -1,7 +1,11 @@
-import { useState } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { useBudget } from "@/context/BudgetContext";
-import { CATEGORIES } from "@/types/budget";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useAppStore } from "@/lib/store";
 
 interface Props {
   open: boolean;
@@ -9,26 +13,46 @@ interface Props {
 }
 
 export function AddTransactionSheet({ open, onOpenChange }: Props) {
-  const { accounts, addTransaction } = useBudget();
-  const [accountId, setAccountId] = useState(accounts[0]?.id || "");
+  const accounts = useAppStore((s) => s.accounts);
+  const addTransaction = useAppStore((s) => s.addTransaction);
+
+  const defaultAccountId = useMemo(() => accounts[0]?.id ?? "", [accounts]);
+
+  const [accountId, setAccountId] = useState(defaultAccountId);
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState("Other");
+  const [categoryId, setCategoryId] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [isExpense, setIsExpense] = useState(true);
+  const categories = useAppStore((s) => s.categories);
+
+  // If accounts load/change, ensure we always have a valid selected account
+  useEffect(() => {
+    if (!accountId && defaultAccountId) setAccountId(defaultAccountId);
+  }, [accountId, defaultAccountId]);
+
+  // ensure valid category
+  useEffect(() => {
+    if (!categoryId && categories.length) {
+      const other = categories.find((c) => c.name === "Other") ?? categories[0];
+      setCategoryId(other.id);
+    }
+  }, [categoryId, categories]);
 
   const handleSubmit = () => {
     if (!merchant || !amount || !accountId) return;
-    const num = parseFloat(amount);
-    if (isNaN(num)) return;
+    const num = Number(amount);
+    if (!Number.isFinite(num)) return;
 
     addTransaction({
-      id: crypto.randomUUID(),
       accountId,
       date,
-      merchant,
+      merchant: merchant.trim(),
       amount: isExpense ? -Math.abs(num) : Math.abs(num),
-      category,
+      // keep as string for now to match your existing app
+      categoryId,
+      note: undefined,
+      importBatchId: undefined,
     });
 
     setMerchant("");
@@ -38,17 +62,23 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="rounded-t-2xl max-h-[85vh] overflow-y-auto">
+      <SheetContent
+        side="bottom"
+        className="rounded-t-2xl max-h-[85vh] overflow-y-auto"
+      >
         <SheetHeader>
           <SheetTitle>Add Transaction</SheetTitle>
         </SheetHeader>
+
         <div className="space-y-4 mt-4">
           {/* Type toggle */}
           <div className="flex gap-2">
             <button
               onClick={() => setIsExpense(true)}
               className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
-                isExpense ? "bg-destructive/15 text-destructive" : "bg-secondary text-muted-foreground"
+                isExpense
+                  ? "bg-destructive/15 text-destructive"
+                  : "bg-secondary text-muted-foreground"
               }`}
             >
               Expense
@@ -56,7 +86,9 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
             <button
               onClick={() => setIsExpense(false)}
               className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
-                !isExpense ? "bg-success/15 text-success" : "bg-secondary text-muted-foreground"
+                !isExpense
+                  ? "bg-success/15 text-success"
+                  : "bg-secondary text-muted-foreground"
               }`}
             >
               Income
@@ -65,7 +97,9 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
 
           {/* Account */}
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Account</label>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              Account
+            </label>
             <select
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
@@ -81,7 +115,9 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
 
           {/* Merchant */}
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Merchant</label>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              Merchant
+            </label>
             <input
               value={merchant}
               onChange={(e) => setMerchant(e.target.value)}
@@ -92,7 +128,9 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
 
           {/* Amount */}
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Amount</label>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              Amount
+            </label>
             <input
               type="number"
               value={amount}
@@ -104,21 +142,27 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
 
           {/* Category */}
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Category</label>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              Category
+            </label>
             <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
               className="w-full rounded-lg bg-secondary px-3 py-2.5 text-sm text-foreground"
             >
-              {CATEGORIES.map((c) => (
-                <option key={c} value={c}>{c}</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.icon ?? "📌"} {c.name}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Date */}
           <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Date</label>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              Date
+            </label>
             <input
               type="date"
               value={date}

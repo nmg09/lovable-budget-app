@@ -1,59 +1,80 @@
-import { useBudget } from "@/context/BudgetContext";
 import { useMemo } from "react";
 import { TrendingDown, TrendingUp, Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { AccountCard } from "@/components/AccountCard";
 import { TransactionRow } from "@/components/TransactionRow";
+import { useAppStore } from "@/lib/store";
 
 export default function HomePage() {
-  const { accounts, transactions, settings, convert, currentMonth } = useBudget();
   const navigate = useNavigate();
 
-  const totalBalance = useMemo(
-    () =>
-      accounts.reduce(
-        (sum, a) => sum + convert(a.balance, a.currency, settings.homeCurrency),
-        0
-      ),
-    [accounts, convert, settings.homeCurrency]
-  );
+  const accounts = useAppStore((s) => s.accounts);
+  const transactions = useAppStore((s) => s.transactions);
+  const fxRates = useAppStore((s) => s.fxRates);
+  const homeCurrency = useAppStore((s) => s.homeCurrency);
+
+  const currentMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+
+  const rateToUSD = (currency: string) =>
+    fxRates.find((r) => r.currency === currency)?.rateToUSD ?? 1;
+
+  // MVP: homeCurrency is USD for now. If you later allow homeCurrency != USD,
+  // we’ll add a proper cross conversion. For now: convert everything to USD.
+  const convertToHome = (amount: number, fromCurrency: string) => {
+    if (homeCurrency === "USD") return amount * rateToUSD(fromCurrency);
+    // fallback: treat homeCurrency as USD until we add cross-rates
+    return amount * rateToUSD(fromCurrency);
+  };
 
   const monthTx = useMemo(
     () => transactions.filter((t) => t.date.startsWith(currentMonth)),
     [transactions, currentMonth]
   );
 
-  const monthIncome = useMemo(
-    () =>
-      monthTx
-        .filter((t) => t.amount > 0)
-        .reduce((sum, t) => {
-          const acc = accounts.find((a) => a.id === t.accountId);
-          return sum + convert(t.amount, acc?.currency || settings.homeCurrency, settings.homeCurrency);
-        }, 0),
-    [monthTx, accounts, convert, settings.homeCurrency]
-  );
+  const monthIncome = useMemo(() => {
+    return monthTx
+      .filter((t) => t.amount > 0)
+      .reduce((sum, t) => {
+        const acc = accounts.find((a) => a.id === t.accountId);
+        const currency = acc?.currency ?? homeCurrency;
+        return sum + convertToHome(t.amount, currency);
+      }, 0);
+  }, [monthTx, accounts, homeCurrency, fxRates]);
 
-  const monthExpense = useMemo(
-    () =>
-      monthTx
-        .filter((t) => t.amount < 0)
-        .reduce((sum, t) => {
-          const acc = accounts.find((a) => a.id === t.accountId);
-          return sum + convert(Math.abs(t.amount), acc?.currency || settings.homeCurrency, settings.homeCurrency);
-        }, 0),
-    [monthTx, accounts, convert, settings.homeCurrency]
-  );
+  const monthExpense = useMemo(() => {
+    return monthTx
+      .filter((t) => t.amount < 0)
+      .reduce((sum, t) => {
+        const acc = accounts.find((a) => a.id === t.accountId);
+        const currency = acc?.currency ?? homeCurrency;
+        return sum + convertToHome(Math.abs(t.amount), currency);
+      }, 0);
+  }, [monthTx, accounts, homeCurrency, fxRates]);
+
+  const totalBalance = useMemo(() => {
+    // MVP balance = sum of all transactions per account converted to home currency.
+    // Later we’ll add startingBalance and show true account balances.
+    return accounts.reduce((sum, a) => {
+      const accTxSum = transactions
+        .filter((t) => t.accountId === a.id)
+        .reduce((s, t) => s + t.amount, 0);
+
+      return sum + convertToHome(accTxSum, a.currency);
+    }, 0);
+  }, [accounts, transactions, homeCurrency, fxRates]);
 
   const recentTx = useMemo(
-    () => [...transactions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5),
+    () =>
+      [...transactions]
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 5),
     [transactions]
   );
 
   const fmt = (n: number) =>
     new Intl.NumberFormat("en-US", {
       style: "currency",
-      currency: settings.homeCurrency,
+      currency: homeCurrency === "USD" ? "USD" : "USD",
       minimumFractionDigits: 2,
     }).format(n);
 
@@ -62,7 +83,9 @@ export default function HomePage() {
       {/* Header */}
       <div className="text-center space-y-1">
         <p className="text-sm text-muted-foreground">Total Balance</p>
-        <h1 className="text-4xl font-bold tracking-tight">{fmt(totalBalance)}</h1>
+        <h1 className="text-4xl font-bold tracking-tight">
+          {fmt(totalBalance)}
+        </h1>
       </div>
 
       {/* Income / Expense summary */}
@@ -94,13 +117,14 @@ export default function HomePage() {
           <button
             onClick={() => navigate("/settings")}
             className="text-primary text-sm font-medium"
+            aria-label="Manage accounts"
           >
             <Plus className="h-4 w-4" />
           </button>
         </div>
         <div className="space-y-2">
           {accounts.map((a) => (
-            <AccountCard key={a.id} account={a} />
+            <AccountCard key={a.id} account={a as any} />
           ))}
         </div>
       </div>
@@ -118,10 +142,12 @@ export default function HomePage() {
         </div>
         <div className="ios-card !p-0 overflow-hidden">
           {recentTx.map((tx) => (
-            <TransactionRow key={tx.id} transaction={tx} />
+            <TransactionRow key={tx.id} transaction={tx as any} />
           ))}
           {recentTx.length === 0 && (
-            <p className="text-center text-muted-foreground py-8 text-sm">No transactions yet</p>
+            <p className="text-center text-muted-foreground py-8 text-sm">
+              No transactions yet
+            </p>
           )}
         </div>
       </div>

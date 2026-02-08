@@ -1,7 +1,12 @@
-import { useState, useCallback } from "react";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { useBudget } from "@/context/BudgetContext";
+import { useState, useCallback, useMemo } from "react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Upload, Check, AlertCircle } from "lucide-react";
+import { useAppStore } from "@/lib/store";
 
 interface Props {
   open: boolean;
@@ -10,7 +15,15 @@ interface Props {
 
 type Step = "upload" | "map" | "preview" | "done";
 
-const MAPPABLE_FIELDS = ["date", "merchant", "amount", "debit", "credit", "category", "ignore"] as const;
+const MAPPABLE_FIELDS = [
+  "date",
+  "merchant",
+  "amount",
+  "debit",
+  "credit",
+  "category",
+  "ignore",
+] as const;
 type MappableField = (typeof MAPPABLE_FIELDS)[number];
 
 function parseCsv(text: string): string[][] {
@@ -20,34 +33,71 @@ function parseCsv(text: string): string[][] {
     let current = "";
     let inQuotes = false;
     for (const ch of line) {
-      if (ch === '"') {
-        inQuotes = !inQuotes;
-      } else if (ch === "," && !inQuotes) {
+      if (ch === '"') inQuotes = !inQuotes;
+      else if (ch === "," && !inQuotes) {
         result.push(current.trim());
         current = "";
-      } else {
-        current += ch;
-      }
+      } else current += ch;
     }
     result.push(current.trim());
     return result;
   });
 }
 
-function hashRow(row: string[]): string {
-  return row.join("|").toLowerCase().replace(/\s+/g, " ");
+// Safer fingerprint than "entire row", and independent of CSV column order
+function fingerprint(tx: {
+  accountId: string;
+  date: string;
+  merchant: string;
+  amount: number;
+}) {
+  const m = tx.merchant.toLowerCase().replace(/\s+/g, " ").trim();
+  const a = Math.round(tx.amount * 100); // cents
+  return `${tx.accountId}|${tx.date}|${a}|${m}`;
+}
+
+function cleanNumber(v: string) {
+  return Number(String(v ?? "").replace(/[^0-9.\-]/g, "")) || 0;
 }
 
 export function CsvImportSheet({ open, onOpenChange }: Props) {
-  const { accounts, addTransaction, transactions } = useBudget();
+  const accounts = useAppStore((s) => s.accounts);
+  const addTransaction = useAppStore((s) => s.addTransaction);
+  const transactions = useAppStore((s) => s.transactions);
+
   const [step, setStep] = useState<Step>("upload");
   const [rows, setRows] = useState<string[][]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<number, MappableField>>({});
   const [accountId, setAccountId] = useState(accounts[0]?.id || "");
-  const [preview, setPreview] = useState<Array<{ date: string; merchant: string; amount: number }>>([]);
+
+  const [preview, setPreview] = useState<
+    Array<{
+      date: string;
+      merchant: string;
+      amount: number;
+      categoryId: string;
+      fp: string;
+    }>
+  >([]);
+
   const [dupeCount, setDupeCount] = useState(0);
   const [importCount, setImportCount] = useState(0);
+
+  const existingFPs = useMemo(() => {
+    const setFP = new Set<string>();
+    for (const t of transactions) {
+      setFP.add(
+        fingerprint({
+          accountId: t.accountId,
+          date: t.date,
+          merchant: t.merchant,
+          amount: t.amount,
+        })
+      );
+    }
+    return setFP;
+  }, [transactions]);
 
   const reset = () => {
     setStep("upload");
@@ -62,72 +112,116 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
   const handleFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
       const parsed = parseCsv(text);
       if (parsed.length < 2) return;
-      setHeaders(parsed[0]);
+
+      const hdrs = parsed[0];
+      setHeaders(hdrs);
       setRows(parsed.slice(1));
+
       // Auto-map by header name
       const autoMap: Record<number, MappableField> = {};
-      parsed[0].forEach((h, i) => {
+      hdrs.forEach((h, i) => {
         const lower = h.toLowerCase();
         if (lower.includes("date")) autoMap[i] = "date";
-        else if (lower.includes("merchant") || lower.includes("description") || lower.includes("payee") || lower.includes("name"))
+        else if (
+          lower.includes("merchant") ||
+          lower.includes("description") ||
+          lower.includes("payee") ||
+          lower.includes("name")
+        )
           autoMap[i] = "merchant";
-        else if (lower === "amount" || lower.includes("amount")) autoMap[i] = "amount";
+        else if (lower === "amount" || lower.includes("amount"))
+          autoMap[i] = "amount";
         else if (lower.includes("debit")) autoMap[i] = "debit";
         else if (lower.includes("credit")) autoMap[i] = "credit";
-        else if (lower.includes("category") || lower.includes("type")) autoMap[i] = "category";
+        else if (lower.includes("category") || lower.includes("type"))
+          autoMap[i] = "category";
       });
+
       setMapping(autoMap);
       setStep("map");
     };
+
     reader.readAsText(file);
   }, []);
 
   const handlePreview = () => {
-    const dateIdx = Object.entries(mapping).find(([, v]) => v === "date")?.[0];
-    const merchantIdx = Object.entries(mapping).find(([, v]) => v === "merchant")?.[0];
-    const amountIdx = Object.entries(mapping).find(([, v]) => v === "amount")?.[0];
-    const debitIdx = Object.entries(mapping).find(([, v]) => v === "debit")?.[0];
-    const creditIdx = Object.entries(mapping).find(([, v]) => v === "credit")?.[0];
+    const dateIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "date"
+    )?.[0];
+    const merchantIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "merchant"
+    )?.[0];
+    const amountIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "amount"
+    )?.[0];
+    const debitIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "debit"
+    )?.[0];
+    const creditIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "credit"
+    )?.[0];
+    const catIdxStr = Object.entries(mapping).find(
+      ([, v]) => v === "category"
+    )?.[0];
 
-    if (!dateIdx || !merchantIdx || (!amountIdx && !debitIdx)) return;
+    if (!dateIdxStr || !merchantIdxStr || (!amountIdxStr && !debitIdxStr))
+      return;
 
-    const existingHashes = new Set(transactions.map((t) => t.hash).filter(Boolean));
-    const items: Array<{ date: string; merchant: string; amount: number }> = [];
+    const dateIdx = Number(dateIdxStr);
+    const merchantIdx = Number(merchantIdxStr);
+    const amountIdx =
+      amountIdxStr !== undefined ? Number(amountIdxStr) : undefined;
+    const debitIdx =
+      debitIdxStr !== undefined ? Number(debitIdxStr) : undefined;
+    const creditIdx =
+      creditIdxStr !== undefined ? Number(creditIdxStr) : undefined;
+    const catIdx = catIdxStr !== undefined ? Number(catIdxStr) : undefined;
+
+    const items: Array<{
+      date: string;
+      merchant: string;
+      amount: number;
+      categoryId: string;
+      fp: string;
+    }> = [];
     let dupes = 0;
 
     rows.forEach((row) => {
-      const hash = hashRow(row);
-      if (existingHashes.has(hash)) {
+      // amount parsing
+      let amount = 0;
+      if (amountIdx !== undefined) {
+        amount = cleanNumber(row[amountIdx]);
+      } else {
+        const debit = cleanNumber(row[debitIdx!]);
+        const credit =
+          creditIdx !== undefined ? cleanNumber(row[creditIdx]) : 0;
+        amount = credit - debit; // income positive, expense negative
+      }
+
+      // date parsing: normalize to yyyy-mm-dd when possible
+      const rawDate = row[dateIdx] || "";
+      let date = rawDate;
+      const parsedDate = new Date(rawDate);
+      if (!isNaN(parsedDate.getTime()))
+        date = parsedDate.toISOString().slice(0, 10);
+
+      const merchant = (row[merchantIdx] || "Unknown").trim();
+      const categoryId =
+        catIdx !== undefined ? (row[catIdx] || "Other").trim() : "Other";
+
+      const fp = fingerprint({ accountId, date, merchant, amount });
+      if (existingFPs.has(fp)) {
         dupes++;
         return;
       }
-      let amount = 0;
-      if (amountIdx !== undefined) {
-        amount = parseFloat(row[Number(amountIdx)]?.replace(/[^0-9.\-]/g, "") || "0");
-      } else {
-        const debit = parseFloat(row[Number(debitIdx!)]?.replace(/[^0-9.]/g, "") || "0");
-        const credit = creditIdx !== undefined ? parseFloat(row[Number(creditIdx)]?.replace(/[^0-9.]/g, "") || "0") : 0;
-        amount = credit - debit;
-      }
 
-      const rawDate = row[Number(dateIdx)] || "";
-      let date = rawDate;
-      // Try to parse various date formats
-      const parsed = new Date(rawDate);
-      if (!isNaN(parsed.getTime())) {
-        date = parsed.toISOString().slice(0, 10);
-      }
-
-      items.push({
-        date,
-        merchant: row[Number(merchantIdx)] || "Unknown",
-        amount,
-      });
+      items.push({ date, merchant, amount, categoryId, fp });
     });
 
     setPreview(items);
@@ -136,25 +230,20 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
   };
 
   const handleImport = () => {
-    const catIdx = Object.entries(mapping).find(([, v]) => v === "category")?.[0];
-    const existingHashes = new Set(transactions.map((t) => t.hash).filter(Boolean));
+    const importBatchId = crypto.randomUUID?.() ?? String(Date.now());
 
     let count = 0;
-    rows.forEach((row, i) => {
-      const hash = hashRow(row);
-      if (existingHashes.has(hash)) return;
-      if (i >= preview.length) return;
-      const p = preview[i];
-      if (!p) return;
+    preview.forEach((p) => {
+      // recheck duplicates in case something changed
+      if (existingFPs.has(p.fp)) return;
 
       addTransaction({
-        id: crypto.randomUUID(),
         accountId,
         date: p.date,
         merchant: p.merchant,
         amount: p.amount,
-        category: catIdx !== undefined ? (row[Number(catIdx)] || "Other") : "Other",
-        hash,
+        categoryId: p.categoryId || "Other",
+        importBatchId,
       });
       count++;
     });
@@ -171,7 +260,10 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
         onOpenChange(v);
       }}
     >
-      <SheetContent side="bottom" className="rounded-t-2xl max-h-[90vh] overflow-y-auto">
+      <SheetContent
+        side="bottom"
+        className="rounded-t-2xl max-h-[90vh] overflow-y-auto"
+      >
         <SheetHeader>
           <SheetTitle>
             {step === "upload" && "Import CSV"}
@@ -186,7 +278,9 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
           {step === "upload" && (
             <div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Account</label>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Account
+                </label>
                 <select
                   value={accountId}
                   onChange={(e) => setAccountId(e.target.value)}
@@ -199,10 +293,18 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
                   ))}
                 </select>
               </div>
+
               <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border py-12 cursor-pointer hover:bg-secondary/50 transition-colors">
                 <Upload className="h-8 w-8 text-muted-foreground mb-2" />
-                <span className="text-sm text-muted-foreground">Tap to select CSV file</span>
-                <input type="file" accept=".csv" onChange={handleFile} className="hidden" />
+                <span className="text-sm text-muted-foreground">
+                  Tap to select CSV file
+                </span>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFile}
+                  className="hidden"
+                />
               </label>
             </div>
           )}
@@ -211,21 +313,29 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
           {step === "map" && (
             <div>
               <p className="text-xs text-muted-foreground mb-3">
-                Map each column to a field. Need at least: date, merchant, and amount (or debit/credit).
+                Map each column to a field. Need at least: date, merchant, and
+                amount (or debit/credit).
               </p>
               <div className="space-y-2">
                 {headers.map((h, i) => (
                   <div key={i} className="flex items-center gap-3">
-                    <span className="text-xs font-medium w-28 truncate">{h}</span>
+                    <span className="text-xs font-medium w-28 truncate">
+                      {h}
+                    </span>
                     <select
                       value={mapping[i] || "ignore"}
                       onChange={(e) =>
-                        setMapping((prev) => ({ ...prev, [i]: e.target.value as MappableField }))
+                        setMapping((prev) => ({
+                          ...prev,
+                          [i]: e.target.value as MappableField,
+                        }))
                       }
                       className="flex-1 rounded-lg bg-secondary px-2 py-1.5 text-xs text-foreground"
                     >
                       {MAPPABLE_FIELDS.map((f) => (
-                        <option key={f} value={f}>{f}</option>
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -254,7 +364,9 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
               {dupeCount > 0 && (
                 <div className="flex items-center gap-2 rounded-lg bg-warning/15 px-3 py-2 mb-3">
                   <AlertCircle className="h-4 w-4 text-warning" />
-                  <span className="text-xs text-warning">{dupeCount} duplicate(s) will be skipped</span>
+                  <span className="text-xs text-warning">
+                    {dupeCount} duplicate(s) will be skipped
+                  </span>
                 </div>
               )}
               <p className="text-xs text-muted-foreground mb-2">
@@ -262,12 +374,20 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
               </p>
               <div className="ios-card !p-0 overflow-hidden max-h-60 overflow-y-auto">
                 {preview.slice(0, 20).map((p, i) => (
-                  <div key={i} className="ios-list-item">
+                  <div key={p.fp ?? i} className="ios-list-item">
                     <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{p.merchant}</p>
-                      <p className="text-[10px] text-muted-foreground">{p.date}</p>
+                      <p className="text-xs font-medium truncate">
+                        {p.merchant}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {p.date}
+                      </p>
                     </div>
-                    <span className={`text-xs font-semibold tabular-nums ${p.amount < 0 ? "text-foreground" : "text-success"}`}>
+                    <span
+                      className={`text-xs font-semibold tabular-nums ${
+                        p.amount < 0 ? "text-foreground" : "text-success"
+                      }`}
+                    >
                       {p.amount < 0 ? "−" : "+"}
                       {Math.abs(p.amount).toFixed(2)}
                     </span>
@@ -302,9 +422,13 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-success/15">
                 <Check className="h-6 w-6 text-success" />
               </div>
-              <p className="text-sm font-medium">{importCount} transactions imported</p>
+              <p className="text-sm font-medium">
+                {importCount} transactions imported
+              </p>
               {dupeCount > 0 && (
-                <p className="text-xs text-muted-foreground mt-1">{dupeCount} duplicates skipped</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {dupeCount} duplicates skipped
+                </p>
               )}
               <button
                 onClick={() => {
