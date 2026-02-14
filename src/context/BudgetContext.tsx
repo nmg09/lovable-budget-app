@@ -36,6 +36,7 @@ const BudgetContext = createContext<BudgetContextType | null>(null);
 
 export function BudgetProvider({ children }: { children: React.ReactNode }) {
   const repositoryRef = useRef(createBudgetRepository());
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const repository = repositoryRef.current;
 
   const [accounts, setAccounts] = useState<Account[]>(defaultAccounts);
@@ -74,43 +75,29 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!isHydrated) return;
-    void repository.saveAccounts(accounts).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to save accounts.";
-      setSyncError(message);
-    });
-  }, [accounts, isHydrated, repository]);
 
-  useEffect(() => {
-    if (!isHydrated) return;
-    void repository.saveTransactions(transactions).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to save transactions.";
-      setSyncError(message);
-    });
-  }, [transactions, isHydrated, repository]);
+    const accountsSnapshot = [...accounts];
+    const budgetsSnapshot = [...budgets];
+    const fxRatesSnapshot = [...fxRates];
+    const settingsSnapshot = settings;
+    const validAccountIds = new Set(accountsSnapshot.map((a) => a.id));
+    const transactionsSnapshot = transactions.filter((t) => validAccountIds.has(t.accountId));
 
-  useEffect(() => {
-    if (!isHydrated) return;
-    void repository.saveBudgets(budgets).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to save budgets.";
-      setSyncError(message);
-    });
-  }, [budgets, isHydrated, repository]);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    void repository.saveFxRates(fxRates).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to save FX rates.";
-      setSyncError(message);
-    });
-  }, [fxRates, isHydrated, repository]);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    void repository.saveSettings(settings).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to save settings.";
-      setSyncError(message);
-    });
-  }, [settings, isHydrated, repository]);
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        await repository.saveAccounts(accountsSnapshot);
+        await repository.saveTransactions(transactionsSnapshot);
+        await repository.saveBudgets(budgetsSnapshot);
+        await repository.saveFxRates(fxRatesSnapshot);
+        await repository.saveSettings(settingsSnapshot);
+        setSyncError(null);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Failed to sync data.";
+        setSyncError(message);
+      });
+  }, [accounts, budgets, fxRates, settings, transactions, isHydrated, repository]);
 
   const convert = useCallback(
     (amount: number, from: string, to: string): number => {

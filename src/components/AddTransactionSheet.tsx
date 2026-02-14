@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useBudget } from "@/context/BudgetContext";
 import { CATEGORIES } from "@/types/budget";
@@ -17,8 +17,19 @@ export function AddTransactionSheet({ open, onOpenChange }: Props) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [isExpense, setIsExpense] = useState(true);
 
+  useEffect(() => {
+    if (!accounts.length) {
+      setAccountId("");
+      return;
+    }
+    if (!accounts.some((a) => a.id === accountId)) {
+      setAccountId(accounts[0].id);
+    }
+  }, [accounts, accountId]);
+
   const handleSubmit = () => {
     if (!merchant || !amount || !accountId) return;
+    if (!accounts.some((a) => a.id === accountId)) return;
     const num = parseFloat(amount);
     if (isNaN(num)) return;
 

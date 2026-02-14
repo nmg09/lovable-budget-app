@@ -25,7 +25,7 @@ npm run prisma:push
 npm run dev:full
 ```
 
-Frontend runs on `http://localhost:5173` and API on `http://localhost:4000`.
+Frontend runs on `http://localhost:8080` and API on `http://localhost:4000`.
 
 ## How can I edit this code?
 

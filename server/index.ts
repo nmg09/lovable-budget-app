@@ -98,6 +98,7 @@ app.put("/budget/settings", async (req: Request, res: Response, next: NextFuncti
 });
 
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  console.error("API error:", error);
   if (error instanceof ZodError) {
     return res.status(400).json({ message: "Invalid request body", issues: error.issues });
   }

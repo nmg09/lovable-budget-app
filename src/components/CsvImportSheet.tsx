@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useBudget } from "@/context/BudgetContext";
 import { Upload, Check, AlertCircle } from "lucide-react";
@@ -48,6 +48,16 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
   const [preview, setPreview] = useState<Array<{ date: string; merchant: string; amount: number }>>([]);
   const [dupeCount, setDupeCount] = useState(0);
   const [importCount, setImportCount] = useState(0);
+
+  useEffect(() => {
+    if (!accounts.length) {
+      setAccountId("");
+      return;
+    }
+    if (!accounts.some((a) => a.id === accountId)) {
+      setAccountId(accounts[0].id);
+    }
+  }, [accounts, accountId]);
 
   const reset = () => {
     setStep("upload");
@@ -136,6 +146,7 @@ export function CsvImportSheet({ open, onOpenChange }: Props) {
   };
 
   const handleImport = () => {
+    if (!accountId || !accounts.some((a) => a.id === accountId)) return;
     const catIdx = Object.entries(mapping).find(([, v]) => v === "category")?.[0];
     const existingHashes = new Set(transactions.map((t) => t.hash).filter(Boolean));
 
