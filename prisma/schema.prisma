@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @db.Uuid
+  email        String        @unique
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  accounts     Account[]
+  transactions Transaction[]
+  budgets      Budget[]
+  fxRates      FxRate[]
+  appSettings  AppSettings?
+
+  @@map("users")
+}
+
+model Account {
+  id           String        @id @db.Uuid
+  userId       String        @map("user_id") @db.Uuid
+  name         String
+  currency     String        @db.Char(3)
+  balance      Decimal       @db.Decimal(14, 2)
+  color        String
+  icon         String
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId], map: "accounts_user_id_idx")
+  @@map("accounts")
+}
+
+model Transaction {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  accountId String   @map("account_id") @db.Uuid
+  txDate    DateTime @map("tx_date") @db.Date
+  merchant  String
+  amount    Decimal  @db.Decimal(14, 2)
+  category  String
+  note      String?
+  hash      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([userId, txDate(sort: Desc)], map: "transactions_user_date_idx")
+  @@unique([userId, hash], map: "transactions_user_hash_uq")
+  @@map("transactions")
+}
+
+model Budget {
+  id          String   @id @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  category    String
+  month       String   @db.Char(7)
+  limitAmount Decimal  @map("limit_amount") @db.Decimal(14, 2)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, category, month])
+  @@index([userId], map: "budgets_user_id_idx")
+  @@map("budgets")
+}
+
+model FxRate {
+  id           String   @id @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  currencyFrom String   @map("currency_from") @db.Char(3)
+  currencyTo   String   @map("currency_to") @db.Char(3)
+  rate         Decimal  @db.Decimal(18, 8)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, currencyFrom, currencyTo])
+  @@index([userId], map: "fx_rates_user_id_idx")
+  @@map("fx_rates")
+}
+
+model AppSettings {
+  userId       String @id @map("user_id") @db.Uuid
+  homeCurrency String @map("home_currency") @db.Char(3)
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("app_settings")
+}

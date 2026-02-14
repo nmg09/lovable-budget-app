@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useBudget } from "@/context/BudgetContext";
 import { CURRENCIES, ACCOUNT_COLORS } from "@/types/budget";
-import { Plus, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Trash2, ChevronRight, RefreshCw } from "lucide-react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 export default function SettingsPage() {
-  const { settings, setSettings, accounts, addAccount, deleteAccount, fxRates, setFxRates } = useBudget();
+  const { settings, setSettings, accounts, addAccount, deleteAccount, fxRates, setFxRates, dataSource, syncError, reloadData } = useBudget();
   const [showAddAccount, setShowAddAccount] = useState(false);
   const [showFxRates, setShowFxRates] = useState(false);
   const [accName, setAccName] = useState("");
@@ -38,6 +38,23 @@ export default function SettingsPage() {
   return (
     <div className="px-4 pt-14 pb-24 max-w-lg mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Settings</h1>
+
+      <div className="ios-card">
+        <p className="ios-section-header !px-0">Data Sync</p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Source: <span className="font-medium text-foreground">{dataSource === "remote" ? "Remote API" : "Local device"}</span>
+          </p>
+          <button
+            onClick={() => void reloadData()}
+            className="rounded-lg bg-secondary p-2 text-secondary-foreground"
+            aria-label="Reload data"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        {syncError && <p className="mt-2 text-xs text-destructive">{syncError}</p>}
+      </div>
 
       {/* Home Currency */}
       <div className="ios-card">

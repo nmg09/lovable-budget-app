@@ -4,6 +4,29 @@
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
 
+## Local full-stack setup (frontend + API + Postgres)
+
+1. Copy env file:
+```sh
+# PowerShell
+Copy-Item .env.example .env
+```
+2. Install dependencies:
+```sh
+npm install
+```
+3. Generate Prisma client and sync schema:
+```sh
+npm run prisma:generate
+npm run prisma:push
+```
+4. Run frontend + backend together:
+```sh
+npm run dev:full
+```
+
+Frontend runs on `http://localhost:5173` and API on `http://localhost:4000`.
+
 ## How can I edit this code?
 
 There are several ways of editing your application.

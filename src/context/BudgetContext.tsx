@@ -1,6 +1,13 @@
-import React, { createContext, useContext, useMemo, useCallback } from "react";
-import { useLocalStorage } from "@/hooks/use-local-storage";
-import type { Account, Transaction, Budget, FxRate, AppSettings } from "@/types/budget";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import type { Account, AppSettings, Budget, FxRate, Transaction } from "@/types/budget";
+import { createBudgetRepository } from "@/lib/data/repository";
+import {
+  defaultAccounts,
+  defaultBudgets,
+  defaultFxRates,
+  defaultSettings,
+  defaultTransactions,
+} from "@/lib/data/default-data";
 
 interface BudgetContextType {
   accounts: Account[];
@@ -19,49 +26,91 @@ interface BudgetContextType {
   addAccount: (account: Account) => void;
   deleteAccount: (id: string) => void;
   currentMonth: string;
+  isHydrated: boolean;
+  syncError: string | null;
+  dataSource: "local" | "remote";
+  reloadData: () => Promise<void>;
 }
 
 const BudgetContext = createContext<BudgetContextType | null>(null);
 
 export function BudgetProvider({ children }: { children: React.ReactNode }) {
-  const [accounts, setAccounts] = useLocalStorage<Account[]>("budget-accounts", [
-    { id: "1", name: "Main Checking", currency: "USD", balance: 5240.50, color: "hsl(211, 100%, 50%)", icon: "💳" },
-    { id: "2", name: "Savings", currency: "USD", balance: 12800.00, color: "hsl(142, 72%, 42%)", icon: "🏦" },
-  ]);
+  const repositoryRef = useRef(createBudgetRepository());
+  const repository = repositoryRef.current;
 
-  const [transactions, setTransactions] = useLocalStorage<Transaction[]>("budget-transactions", [
-    { id: "t1", accountId: "1", date: "2026-02-07", merchant: "Whole Foods", amount: -87.50, category: "Groceries" },
-    { id: "t2", accountId: "1", date: "2026-02-06", merchant: "Uber", amount: -24.30, category: "Transport" },
-    { id: "t3", accountId: "1", date: "2026-02-05", merchant: "Netflix", amount: -15.99, category: "Entertainment" },
-    { id: "t4", accountId: "1", date: "2026-02-05", merchant: "Salary", amount: 4500, category: "Salary" },
-    { id: "t5", accountId: "1", date: "2026-02-04", merchant: "Starbucks", amount: -6.45, category: "Food & Dining" },
-    { id: "t6", accountId: "2", date: "2026-02-03", merchant: "Interest", amount: 12.50, category: "Investment" },
-  ]);
-
-  const [budgets, setBudgets] = useLocalStorage<Budget[]>("budget-budgets", [
-    { id: "b1", category: "Groceries", limit: 500, month: "2026-02" },
-    { id: "b2", category: "Food & Dining", limit: 300, month: "2026-02" },
-    { id: "b3", category: "Transport", limit: 200, month: "2026-02" },
-    { id: "b4", category: "Entertainment", limit: 100, month: "2026-02" },
-    { id: "b5", category: "Shopping", limit: 250, month: "2026-02" },
-  ]);
-
-  const [fxRates, setFxRates] = useLocalStorage<FxRate[]>("budget-fxrates", [
-    { from: "AED", to: "USD", rate: 0.2723 },
-    { from: "EUR", to: "USD", rate: 1.08 },
-    { from: "GBP", to: "USD", rate: 1.27 },
-    { from: "INR", to: "USD", rate: 0.012 },
-    { from: "JPY", to: "USD", rate: 0.0067 },
-  ]);
-
-  const [settings, setSettings] = useLocalStorage<AppSettings>("budget-settings", {
-    homeCurrency: "USD",
-  });
+  const [accounts, setAccounts] = useState<Account[]>(defaultAccounts);
+  const [transactions, setTransactions] = useState<Transaction[]>(defaultTransactions);
+  const [budgets, setBudgets] = useState<Budget[]>(defaultBudgets);
+  const [fxRates, setFxRates] = useState<FxRate[]>(defaultFxRates);
+  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [isHydrated, setIsHydrated] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const currentMonth = useMemo(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }, []);
+
+  const reloadData = useCallback(async () => {
+    try {
+      const snapshot = await repository.loadSnapshot();
+      setAccounts(snapshot.accounts);
+      setTransactions(snapshot.transactions);
+      setBudgets(snapshot.budgets);
+      setFxRates(snapshot.fxRates);
+      setSettings(snapshot.settings);
+      setSyncError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load budget data.";
+      setSyncError(message);
+    } finally {
+      setIsHydrated(true);
+    }
+  }, [repository]);
+
+  useEffect(() => {
+    void reloadData();
+  }, [reloadData]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void repository.saveAccounts(accounts).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to save accounts.";
+      setSyncError(message);
+    });
+  }, [accounts, isHydrated, repository]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void repository.saveTransactions(transactions).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to save transactions.";
+      setSyncError(message);
+    });
+  }, [transactions, isHydrated, repository]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void repository.saveBudgets(budgets).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to save budgets.";
+      setSyncError(message);
+    });
+  }, [budgets, isHydrated, repository]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void repository.saveFxRates(fxRates).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to save FX rates.";
+      setSyncError(message);
+    });
+  }, [fxRates, isHydrated, repository]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    void repository.saveSettings(settings).catch((error) => {
+      const message = error instanceof Error ? error.message : "Failed to save settings.";
+      setSyncError(message);
+    });
+  }, [settings, isHydrated, repository]);
 
   const convert = useCallback(
     (amount: number, from: string, to: string): number => {
@@ -70,7 +119,7 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
       if (direct) return amount * direct.rate;
       const reverse = fxRates.find((r) => r.from === to && r.to === from);
       if (reverse) return amount / reverse.rate;
-      return amount; // fallback
+      return amount;
     },
     [fxRates]
   );
@@ -78,9 +127,7 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
   const addTransaction = useCallback(
     (tx: Transaction) => {
       setTransactions((prev) => [tx, ...prev]);
-      setAccounts((prev) =>
-        prev.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance + tx.amount } : a))
-      );
+      setAccounts((prev) => prev.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance + tx.amount } : a)));
     },
     [setTransactions, setAccounts]
   );
@@ -90,9 +137,7 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
       setTransactions((prev) => {
         const tx = prev.find((t) => t.id === id);
         if (tx) {
-          setAccounts((accs) =>
-            accs.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance - tx.amount } : a))
-          );
+          setAccounts((accs) => accs.map((a) => (a.id === tx.accountId ? { ...a, balance: a.balance - tx.amount } : a)));
         }
         return prev.filter((t) => t.id !== id);
       });
@@ -116,13 +161,26 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
   return (
     <BudgetContext.Provider
       value={{
-        accounts, setAccounts,
-        transactions, setTransactions,
-        budgets, setBudgets,
-        fxRates, setFxRates,
-        settings, setSettings,
-        convert, addTransaction, deleteTransaction,
-        addAccount, deleteAccount, currentMonth,
+        accounts,
+        setAccounts,
+        transactions,
+        setTransactions,
+        budgets,
+        setBudgets,
+        fxRates,
+        setFxRates,
+        settings,
+        setSettings,
+        convert,
+        addTransaction,
+        deleteTransaction,
+        addAccount,
+        deleteAccount,
+        currentMonth,
+        isHydrated,
+        syncError,
+        dataSource: repository.source,
+        reloadData,
       }}
     >
       {children}

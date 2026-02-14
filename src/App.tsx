@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { BudgetProvider } from "@/context/BudgetContext";
 import { BottomTabs } from "@/components/BottomTabs";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import HomePage from "./pages/HomePage";
 import TransactionsPage from "./pages/TransactionsPage";
 import BudgetsPage from "./pages/BudgetsPage";
@@ -19,21 +20,23 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BudgetProvider>
-        <BrowserRouter>
-          <div className="dark min-h-screen bg-background text-foreground">
-            <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/transactions" element={<TransactionsPage />} />
-              <Route path="/budgets" element={<BudgetsPage />} />
-              <Route path="/insights" element={<InsightsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-            <BottomTabs />
-          </div>
-        </BrowserRouter>
-      </BudgetProvider>
+      <ErrorBoundary>
+        <BudgetProvider>
+          <BrowserRouter>
+            <div className="dark min-h-screen bg-background text-foreground">
+              <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/transactions" element={<TransactionsPage />} />
+                <Route path="/budgets" element={<BudgetsPage />} />
+                <Route path="/insights" element={<InsightsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+              <BottomTabs />
+            </div>
+          </BrowserRouter>
+        </BudgetProvider>
+      </ErrorBoundary>
     </TooltipProvider>
   </QueryClientProvider>
 );
