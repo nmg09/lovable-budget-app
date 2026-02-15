@@ -1,3 +1,4 @@
+import { Pencil, Trash2 } from "lucide-react";
 import type { Transaction } from "@/types/budget";
 import { useBudget } from "@/context/BudgetContext";
 
@@ -19,8 +20,14 @@ const categoryIcons: Record<string, string> = {
   Other: "📌",
 };
 
-export function TransactionRow({ transaction }: { transaction: Transaction }) {
-  const { accounts, settings, convert } = useBudget();
+interface Props {
+  transaction: Transaction;
+  onEdit?: (transaction: Transaction) => void;
+  onDelete?: (id: string) => void;
+}
+
+export function TransactionRow({ transaction, onEdit, onDelete }: Props) {
+  const { accounts, settings } = useBudget();
   const account = accounts.find((a) => a.id === transaction.accountId);
   const cur = account?.currency || settings.homeCurrency;
   const isExpense = transaction.amount < 0;
@@ -44,9 +51,32 @@ export function TransactionRow({ transaction }: { transaction: Transaction }) {
           </p>
         </div>
       </div>
-      <span className={`text-sm font-semibold tabular-nums ${isExpense ? "text-foreground" : "text-success"}`}>
-        {isExpense ? "−" : "+"}{fmt(Math.abs(transaction.amount), cur)}
-      </span>
+      <div className="flex items-center gap-2">
+        <span className={`text-sm font-semibold tabular-nums ${isExpense ? "text-foreground" : "text-success"}`}>
+          {isExpense ? "−" : "+"}
+          {fmt(Math.abs(transaction.amount), cur)}
+        </span>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={() => onEdit(transaction)}
+            className="rounded p-1 text-muted-foreground hover:bg-secondary"
+            aria-label="Edit transaction"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        )}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(transaction.id)}
+            className="rounded p-1 text-muted-foreground hover:bg-secondary"
+            aria-label="Delete transaction"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

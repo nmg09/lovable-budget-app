@@ -22,6 +22,7 @@ interface BudgetContextType {
   setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
   convert: (amount: number, from: string, to: string) => number;
   addTransaction: (tx: Transaction) => void;
+  updateTransaction: (tx: Transaction) => void;
   deleteTransaction: (id: string) => void;
   addAccount: (account: Account) => void;
   deleteAccount: (id: string) => void;
@@ -132,6 +133,31 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
     [setTransactions, setAccounts]
   );
 
+  const updateTransaction = useCallback(
+    (updated: Transaction) => {
+      setTransactions((prev) => {
+        const existing = prev.find((t) => t.id === updated.id);
+        if (!existing) return prev;
+
+        setAccounts((accs) => {
+          let next = accs;
+          // Reverse old impact.
+          next = next.map((a) =>
+            a.id === existing.accountId ? { ...a, balance: a.balance - existing.amount } : a
+          );
+          // Apply new impact.
+          next = next.map((a) =>
+            a.id === updated.accountId ? { ...a, balance: a.balance + updated.amount } : a
+          );
+          return next;
+        });
+
+        return prev.map((t) => (t.id === updated.id ? updated : t));
+      });
+    },
+    [setTransactions, setAccounts]
+  );
+
   const addAccount = useCallback(
     (account: Account) => setAccounts((prev) => [...prev, account]),
     [setAccounts]
@@ -160,6 +186,7 @@ export function BudgetProvider({ children }: { children: React.ReactNode }) {
         setSettings,
         convert,
         addTransaction,
+        updateTransaction,
         deleteTransaction,
         addAccount,
         deleteAccount,
